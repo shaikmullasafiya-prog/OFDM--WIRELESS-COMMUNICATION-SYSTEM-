@@ -1,33 +1,87 @@
-clc;
-clear;
-close all;
+clc; clear; close all;
 
-% Step 1: Generate random data
-N = 1000;
-data = randi([0 1], 1, N);
+%% Parameters
+N = 64;                 
+cp_len = 16;            
+numSymbols = 500;       
+snr_db = 0:2:20;        
 
-% Step 2: QPSK Modulation
-data_reshaped = reshape(data, 2, []);
-symbols = data_reshaped(1,:) + 1i*data_reshaped(2,:);
+M = 4;                  
+k = log2(M);            
 
-% Step 3: OFDM (IFFT)
-ofdm_signal = ifft(symbols);
+%% Generate bits
+numBits = numSymbols * N * k;
+data_bits = randi([0 1], numBits, 1);
 
-% Step 4: Add Noise (AWGN)
-snr = 10;
-noisy_signal = awgn(ofdm_signal, snr, 'measured');
+%% QPSK Modulation
+data_symbols = bi2de(reshape(data_bits, [], k));
+modulated = pskmod(data_symbols, M, pi/4);
 
-% Step 5: Receiver (FFT)
-received_symbols = fft(noisy_signal);
+%% OFDM framing
+ofdm_symbols = reshape(modulated, N, []);
 
-% Step 6: Demodulation
-received_bits = zeros(1, N);
-received_bits(1:2:end) = real(received_symbols) > 0;
-received_bits(2:2:end) = imag(received_symbols) > 0;
+%% IFFT (TX OFDM)
+ifft_data = ifft(ofdm_symbols, N);
 
-% Step 7: BER Calculation
-errors = sum(data ~= received_bits);
-ber = errors / N;
+%% Add Cyclic Prefix
+cp = ifft_data(end-cp_len+1:end, :);
+tx_signal = [cp; ifft_data];
+tx_signal = tx_signal(:);   % Serial signal
 
-% Display result
-disp(['Bit Error Rate (BER): ', num2str(ber)]);
+%% Plot Transmitted Signal (first 200 samples)
+figure;
+plot(real(tx_signal(1:200)));
+grid on;
+title('Transmitted OFDM Signal (Time Domain)');
+xlabel('Sample Index');
+ylabel('Amplitude');
+
+ber = zeros(length(snr_db),1);
+
+%% Loop over SNR
+for i = 1:length(snr_db)
+    
+    % AWGN Channel
+    rx_signal = awgn(tx_signal, snr_db(i), 'measured');
+    
+    % Store one RX signal for plotting (only first SNR)
+    if i == 1
+        rx_plot = rx_signal;
+    end
+    
+    % Reshape
+    rx_matrix = reshape(rx_signal, N+cp_len, []);
+    
+    % Remove CP
+    rx_no_cp = rx_matrix(cp_len+1:end, :);
+    
+    % FFT
+    fft_data = fft(rx_no_cp, N);
+    
+    % Demodulation
+    rx_symbols = fft_data(:);
+    demod_data = pskdemod(rx_symbols, M, pi/4);
+    
+    % Bits
+    rx_bits = de2bi(demod_data, k);
+    rx_bits = rx_bits(:);
+    
+    % BER
+    [~, ber(i)] = biterr(data_bits, rx_bits);
+end
+
+%% Plot Received Signal (first 200 samples)
+figure;
+plot(real(rx_plot(1:200)));
+grid on;
+title('Received OFDM Signal (Time Domain, with Noise)');
+xlabel('Sample Index');
+ylabel('Amplitude');
+
+%% BER Plot
+figure;
+semilogy(snr_db, ber, 'o-','LineWidth',2);
+grid on;
+xlabel('SNR (dB)');
+ylabel('BER');
+title('OFDM BER vs SNR (QPSK)');
