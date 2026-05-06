@@ -1,0 +1,68 @@
+clc;
+close all;
+clear all;
+N       = 64;          % no of sub carriers
+cp      = 16;          % cyclic prefix length
+num     = 1e5;         % number of bits
+ebnodb  = 0:1:15;      % SNR range in dB
+
+ber_ofdm    = zeros(size(ebnodb));
+ber_sim     = zeros(size(ebnodb));
+ber_theory  = zeros(size(ebnodb));
+
+for i = 1:length(ebnodb)
+    snr     = ebnodb(i);
+    snr_lin = 10^(snr/10);
+
+    if snr < 6.8
+        M = 2; % BPSK
+        ber_theory(i) = qfunc(sqrt(2*snr_lin));
+    elseif snr < 10.5
+        M = 4; % QPSK
+        ber_theory(i) = qfunc(sqrt(2*snr_lin));
+    else 
+        M = 16; % 16-QAM
+        ber_theory(i) = (3/4) * qfunc(sqrt((12/15) * snr_lin));
+    end
+
+    tx_bits = randi([0 1], N*log2(M), num);
+    modData = qammod(tx_bits(:), M, 'InputType','bit','UnitAveragePower',true);
+
+    % OFDM modulation
+    ofdm    = ifft(reshape(modData, N, []));
+    tx_ofdm = [ofdm(end-cp+1:end,:); ofdm];
+    tx_ofdm = tx_ofdm(:);
+
+    % Convert Eb/N0 to Es/N0 for AWGN
+    snr_sig = snr + 10*log10(log2(M));
+    rx_ofdm = awgn(tx_ofdm, snr_sig, 'measured');
+
+    % OFDM demodulation
+    rx_ofdm = reshape(rx_ofdm, N+cp, []);
+    rx      = rx_ofdm(cp+1:end,:);
+    rec     = fft(rx);
+
+    rx_bits = qamdemod(rec(:), M, 'OutputType','bit','UnitAveragePower',true);
+
+    ber_ofdm(i) = sum(tx_bits(:) ~= rx_bits(:)) / numel(tx_bits);
+
+    %% Single Carrier system 
+    tx_sc      = modData(:);
+    rx_sc      = awgn(tx_sc, snr_sig, 'measured');
+    demod_bits = qamdemod(rx_sc, M, 'OutputType','bit','UnitAveragePower',true);
+    ber_sim(i) = sum(tx_bits(:) ~= demod_bits(:)) / numel(tx_bits);
+end
+
+% Plot BER results
+figure;
+semilogy(ebnodb, ber_ofdm, 'bo-','LineWidth',2); hold on;
+semilogy(ebnodb, ber_sim, 'g*-','LineWidth',2);
+semilogy(ebnodb, ber_theory, 'r--','LineWidth',2);
+grid on;
+xlabel('SNR (dB)');
+ylabel('Bit Error Rate');
+legend('Adaptive OFDM','Adaptive Single Carrier','Theoretical','Location','southwest');
+title('Adaptive Modulation: OFDM vs Single Carrier vs Theory');
+%axis([0 30 1e-7 1]);
+xline(6,'k--','BPSK→QPSK','LabelVerticalAlignment','bottom');
+xline(10,'k--','QPSK→16QAM','LabelVerticalAlignment','bottom');
